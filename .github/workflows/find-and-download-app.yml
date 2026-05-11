@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       app_name:
-        description: 'Enter the name of the application to search and download (e.g., "7-Zip", "VLC", "PowerToys")'
+        description: 'Enter the name of the application (e.g., "VLC", "7-Zip", "PowerToys")'
         required: true
-        default: '7-Zip'
+        default: 'VLC'
 
 jobs:
   find-download-and-upload:
@@ -16,45 +16,97 @@ jobs:
       - name: 🛒 Checkout repository
         uses: actions/checkout@v4
 
-      - name: 🔎 Find Application ID from Name
+      # ✅ Update Winget from GitHub (to ensure download command exists)
+      - name: 🔄 Update Winget from GitHub
+        shell: pwsh
+        run: |
+          $wingetUrl = "https://github.com/microsoft/winget-cli/releases/latest/download/Microsoft.DesktopAppInstaller_8wekyb3d8bbwe.msixbundle"
+          $out = "$env:TEMP\winget.msixbundle"
+          Invoke-WebRequest $wingetUrl -OutFile $out
+          Add-AppxPackage -Path $out
+
+      - name: 🔎 Find Application ID (JSON safe)
         id: find_id
         shell: pwsh
         run: |
-          echo "Searching for app ID for '${{ inputs.app_name }}'..."
-          # Winget can have a progress bar which clutters the output, so we disable it.
-          # We search only in the 'winget' source to avoid potential msstore API errors.
-          $searchResult = winget search "${{ inputs.app_name }}" --source winget --accept-source-agreements --disable-interactivity
+          $appName = "${{ inputs.app_name }}"
+          Write-Host "Searching for app ID for '$appName'..."
           
-          # The output has a header and a line of '---', so we skip the first 2 lines.
-          $firstResultLine = $searchResult.Split([System.Environment]::NewLine) | Select-Object -Skip 2 | Select-Object -First 1
+          $json = winget search --name "$appName" --source winget --accept-source-agreements --disable-interactivity --output json | ConvertFrom-Json
           
-          if ($null -ne $firstResultLine -and $firstResultLine.Trim() -ne "") {
-            # Split by 2 or more whitespace characters to correctly separate columns.
-            $columns = $firstResultLine -split '\s{2,}' | ForEach-Object { $_.Trim() }
-            $appId = $columns[1] # The second column is the ID.
-            
-            if ($null -ne $appId -and $appId.Trim() -ne "") {
-              echo "✅ Found App ID: $appId"
-              echo "APP_ID_FOUND=$appId" >> $env:GITHUB_OUTPUT
-            } else {
-              echo "::error::Could not parse the App ID from the search result line: '$firstResultLine'"
-              exit 1
-            }
-          } else {
-            echo "::error::Could not find any app matching the name '${{ inputs.app_name }}' in the winget source."
+          if ($null -eq $json.Data -or $json.Data.Count -eq 0) {
+            Write-Error "No package found for '$appName' in winget source."
             exit 1
           }
 
-      - name: 📦 Create Download Directory
-        run: mkdir downloads
+          $pkg = $json.Data | Select-Object -First 1
+          $appId = $pkg.PackageIdentifier
+          
+          if ([string]::IsNullOrWhiteSpace($appId)) {
+            Write-Error "Could not extract App ID from search result."
+            exit 1
+          }
 
-      - name: 🔽 Download the Application Installer
-        if: steps.find_id.outputs.APP_ID_FOUND
+          Write-Host "✅ Found App ID: $appId"
+          echo "APP_ID_FOUND=$appId" >> $env:GITHUB_OUTPUT
+
+      - name: 📦 Create Download Directory
         shell: pwsh
         run: |
-          echo "Downloading installer for ID: ${{ steps.find_id.outputs.APP_ID_FOUND }}"
-          winget download --id "${{ steps.find_id.outputs.APP_ID_FOUND }}" --source winget --accept-package-agreements --disable-interactivity --download-directory ./downloads
-      
+          $appName = "${{ inputs.app_name }}"
+          $safeName = $appName -replace '[\\/:*?"<>|]', '_'
+          $dir = Join-Path $env:GITHUB_WORKSPACE "downloads\$safeName"
+          New-Item -ItemType Directory -Force -Path $dir | Out-Null
+          echo "APP_FOLDER=$dir" >> $env:GITHUB_OUTPUT
+
+      - name: 🔽 Download the Application Installer
+        shell: pwsh
+        run: |
+          $id = "${{ steps.find_id.outputs.APP_ID_FOUND }}"
+          $dir = "${{ steps.create_downloads.outputs.APP_FOLDER }}"
+          if (-not $dir) {
+            $appName = "${{ inputs.app_name }}"
+            $safeName = $appName -replace '[\\/:*?"<>|]', '_'
+            $dir = Join-Path $env:GITHUB_WORKSPACE "downloads\$safeName"
+          }
+          Write-Host "Downloading installer for ID: $id"
+          winget download --id "$id" --source winget --accept-package-agreements --accept-source-agreements --disable-interactivity --download-directory "$dir"
+
+      - name: 🧱 Zip & Split if >45MB
+        shell: pwsh
+        run: |
+          $appName = "${{ inputs.app_name }}"
+          $safeName = $appName -replace '[\\/:*?"<>|]', '_'
+          $dir = Join-Path $env:GITHUB_WORKSPACE "downloads\$safeName"
+          $maxSize = 45MB
+          $zipPath = Join-Path $dir "$safeName.zip"
+
+          Compress-Archive -Path "$dir\*" -DestinationPath $zipPath -Force
+
+          $zipInfo = Get-Item $zipPath
+          if ($zipInfo.Length -le $maxSize) {
+            Write-Host "ZIP size is under 45MB. No split needed."
+            exit 0
+          }
+
+          function Split-File {
+            param([string]$Path, [int64]$ChunkSize)
+            $bytes = [System.IO.File]::ReadAllBytes($Path)
+            $total = [math]::Ceiling($bytes.Length / $ChunkSize)
+            for ($i=0; $i -lt $total; $i++) {
+              $offset = $i * $ChunkSize
+              $len = [math]::Min($ChunkSize, $bytes.Length - $offset)
+              $chunk = New-Object byte[] $len
+              [Array]::Copy($bytes, $offset, $chunk, 0, $len)
+              $partPath = "{0}.part{1:00}" -f $Path, ($i+1)
+              [System.IO.File]::WriteAllBytes($partPath, $chunk)
+            }
+            Remove-Item $Path
+          }
+
+          Split-File -Path $zipPath -ChunkSize $maxSize
+          Write-Host "ZIP split into 45MB parts."
+
       - name: 📤 Upload Installer as Artifact
         uses: actions/upload-artifact@v4
         with:
