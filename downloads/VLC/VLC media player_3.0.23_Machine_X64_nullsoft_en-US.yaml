@@ -1,0 +1,201 @@
+PackageIdentifier: VideoLAN.VLC
+PackageVersion: 3.0.23
+Moniker: vlc
+Tags:
+- audio
+- cross-platform
+- dvd
+- foss
+- media-player
+- multimedia
+- open-source
+- video
+- video-player
+PackageLocale: en-US
+Author: VideoLAN
+Description: "VLC is a free and open source cross-platform multimedia player and framework\nthat
+  plays most multimedia files as well as DVDs, Audio CDs, VCDs, and various\nstreaming
+  protocols.\n\nSimple, fast and powerful\n  Plays everything - Files, Discs, Webcams,
+  Devices and Streams.\n  Plays most codecs with no codec packs needed - MPEG-2, MPEG-4,
+  H.264, MKV, WebM,\n    WMV, MP3...\n  Runs on all platforms - Windows, Linux, Mac
+  OS X, Unix, iOS, Android ...\n  Completely Free - no spyware, no ads and no user
+  tracking."
+ShortDescription: VLC is a free and open source cross-platform multimedia player and
+  framework that plays most multimedia files, and various streaming protocols.
+License: GPL-2.0
+LicenseUrl: https://code.videolan.org/videolan/vlc/-/blob/HEAD/COPYING
+PackageName: VLC media player
+PackageUrl: https://www.videolan.org/vlc/
+Publisher: VideoLAN
+PublisherSupportUrl: https://www.videolan.org/support/
+PublisherUrl: https://www.videolan.org/
+Installers:
+- Architecture: x64
+  InstallerType: nullsoft
+  InstallerSha256: 20ad191348684b470ddc4e05204316f3d8e39655f412b3e392a0eef97639daaf
+  InstallerUrl: https://download.videolan.org/pub/videolan/vlc/3.0.23/win64/vlc-3.0.23-win64.exe
+  Scope: machine
+  ElevationRequirement: elevatesSelf
+  ReleaseDate: 2025-12-31
+  InstallerAbortsTerminal: false
+  InstallLocationRequired: false
+  RequireExplicitUpgrade: false
+  DisplayInstallWarnings: false
+  DownloadCommandProhibited: false
+  ArchiveBinariesDependOnPath: false
+  MinimumOSVersion: 6.1.7600.0
+  ProductCode: VLC media player
+  UpgradeBehavior: install
+  Commands:
+  - vlc
+  FileExtensions:
+  - 264
+  - 3g2
+  - 3ga
+  - 3gp
+  - 3gp2
+  - 3gpp
+  - 669
+  - a52
+  - aac
+  - ac3
+  - adt
+  - adts
+  - aif
+  - aifc
+  - aiff
+  - amb
+  - amr
+  - amv
+  - aob
+  - ape
+  - asf
+  - asx
+  - au
+  - avi
+  - awb
+  - b4s
+  - bik
+  - bin
+  - caf
+  - cda
+  - crf
+  - cue
+  - dash
+  - dav
+  - divx
+  - drc
+  - dts
+  - dv
+  - dvr
+  - dvr-ms
+  - evo
+  - f4v
+  - flac
+  - flv
+  - gvi
+  - gxf
+  - ifo
+  - iso
+  - it
+  - kar
+  - m1v
+  - m2t
+  - m2ts
+  - m2v
+  - m3u
+  - m3u8
+  - m4a
+  - m4b
+  - m4p
+  - m4v
+  - m5p
+  - mid
+  - mka
+  - mkv
+  - mod
+  - mov
+  - mp1
+  - mp2
+  - mp2v
+  - mp3
+  - mp4
+  - mp4v
+  - mpa
+  - mpc
+  - mpe
+  - mpeg
+  - mpeg1
+  - mpeg2
+  - mpeg4
+  - mpg
+  - mpga
+  - mpv2
+  - mts
+  - mtv
+  - mus
+  - mxf
+  - nsv
+  - nuv
+  - oga
+  - ogg
+  - ogm
+  - ogv
+  - ogx
+  - oma
+  - opus
+  - pls
+  - ps
+  - qcp
+  - ra
+  - ram
+  - rec
+  - rm
+  - rmi
+  - rmvb
+  - rpl
+  - s3m
+  - sdp
+  - sid
+  - snd
+  - spx
+  - sub
+  - tak
+  - thd
+  - thp
+  - tod
+  - tp
+  - ts
+  - tta
+  - tts
+  - txd
+  - vlc
+  - vob
+  - voc
+  - vqf
+  - vro
+  - w64
+  - wav
+  - wax
+  - webm
+  - wm
+  - wma
+  - wmv
+  - wtv
+  - wv
+  - wvx
+  - xa
+  - xesc
+  - xm
+  - xspf
+  - zab
+  AppsAndFeaturesEntries:
+  - ProductCode: VLC media player
+  InstallerSwitches:
+    Silent: /S
+    SilentWithProgress: /S
+    InstallLocation: /D=<INSTALLPATH>
+  InstallationMetadata:
+    DefaultInstallLocation: '%ProgramFiles%\VideoLAN\VLC'
+ManifestVersion: 1.12.0
+ManifestType: merged
