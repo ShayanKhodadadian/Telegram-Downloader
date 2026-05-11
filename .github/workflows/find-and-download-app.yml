@@ -16,8 +16,7 @@ jobs:
       - name: 🛒 Checkout repository
         uses: actions/checkout@v4
 
-      # ✅ Update Winget from GitHub (to ensure download command exists)
-      - name: 🔄 Update Winget from GitHub
+      - name: 🔄 Update Winget (from GitHub)
         shell: pwsh
         run: |
           $wingetUrl = "https://github.com/microsoft/winget-cli/releases/latest/download/Microsoft.DesktopAppInstaller_8wekyb3d8bbwe.msixbundle"
@@ -25,23 +24,37 @@ jobs:
           Invoke-WebRequest $wingetUrl -OutFile $out
           Add-AppxPackage -Path $out
 
-      - name: 🔎 Find Application ID (JSON safe)
+      - name: 🔎 Find Application ID (Robust JSON Parse)
         id: find_id
         shell: pwsh
         run: |
           $appName = "${{ inputs.app_name }}"
           Write-Host "Searching for app ID for '$appName'..."
-          
-          $json = winget search --name "$appName" --source winget --accept-source-agreements --disable-interactivity --output json | ConvertFrom-Json
-          
-          if ($null -eq $json.Data -or $json.Data.Count -eq 0) {
+
+          $raw = winget search --name "$appName" --source winget --accept-source-agreements --disable-interactivity --output json 2>&1
+          $text = $raw -join "`n"
+
+          # Extract JSON object/array from mixed output
+          $match = [regex]::Match($text, '(\{.*\}|\[.*\])', 'Singleline')
+          if (-not $match.Success) {
+            Write-Error "No JSON detected in winget output. Raw output:`n$text"
+            exit 1
+          }
+
+          $json = $match.Value | ConvertFrom-Json
+
+          $data = $null
+          if ($null -ne $json.Data) { $data = $json.Data }
+          elseif ($null -ne $json.Packages) { $data = $json.Packages }
+
+          if ($null -eq $data -or $data.Count -eq 0) {
             Write-Error "No package found for '$appName' in winget source."
             exit 1
           }
 
-          $pkg = $json.Data | Select-Object -First 1
+          $pkg = $data | Select-Object -First 1
           $appId = $pkg.PackageIdentifier
-          
+
           if ([string]::IsNullOrWhiteSpace($appId)) {
             Write-Error "Could not extract App ID from search result."
             exit 1
@@ -51,6 +64,7 @@ jobs:
           echo "APP_ID_FOUND=$appId" >> $env:GITHUB_OUTPUT
 
       - name: 📦 Create Download Directory
+        id: create_downloads
         shell: pwsh
         run: |
           $appName = "${{ inputs.app_name }}"
@@ -58,54 +72,74 @@ jobs:
           $dir = Join-Path $env:GITHUB_WORKSPACE "downloads\$safeName"
           New-Item -ItemType Directory -Force -Path $dir | Out-Null
           echo "APP_FOLDER=$dir" >> $env:GITHUB_OUTPUT
+          echo "APP_SAFE_NAME=$safeName" >> $env:GITHUB_OUTPUT
 
       - name: 🔽 Download the Application Installer
         shell: pwsh
         run: |
           $id = "${{ steps.find_id.outputs.APP_ID_FOUND }}"
           $dir = "${{ steps.create_downloads.outputs.APP_FOLDER }}"
-          if (-not $dir) {
-            $appName = "${{ inputs.app_name }}"
-            $safeName = $appName -replace '[\\/:*?"<>|]', '_'
-            $dir = Join-Path $env:GITHUB_WORKSPACE "downloads\$safeName"
-          }
           Write-Host "Downloading installer for ID: $id"
           winget download --id "$id" --source winget --accept-package-agreements --accept-source-agreements --disable-interactivity --download-directory "$dir"
 
       - name: 🧱 Zip & Split if >45MB
         shell: pwsh
         run: |
-          $appName = "${{ inputs.app_name }}"
-          $safeName = $appName -replace '[\\/:*?"<>|]', '_'
-          $dir = Join-Path $env:GITHUB_WORKSPACE "downloads\$safeName"
+          $dir = "${{ steps.create_downloads.outputs.APP_FOLDER }}"
+          $safeName = "${{ steps.create_downloads.outputs.APP_SAFE_NAME }}"
           $maxSize = 45MB
-          $zipPath = Join-Path $dir "$safeName.zip"
 
+          $files = Get-ChildItem -Path $dir -File
+          if ($files.Count -eq 0) {
+            Write-Error "No files downloaded in $dir"
+            exit 1
+          }
+
+          $totalSize = ($files | Measure-Object Length -Sum).Sum
+          if ($totalSize -le $maxSize) {
+            Write-Host "Total size <= 45MB. No zip/split required."
+            exit 0
+          }
+
+          $zipPath = Join-Path $dir "$safeName.zip"
           Compress-Archive -Path "$dir\*" -DestinationPath $zipPath -Force
+
+          # Remove original files to keep artifacts clean
+          $files | Remove-Item -Force
 
           $zipInfo = Get-Item $zipPath
           if ($zipInfo.Length -le $maxSize) {
-            Write-Host "ZIP size is under 45MB. No split needed."
+            Write-Host "ZIP size under 45MB. No split needed."
             exit 0
           }
 
           function Split-File {
             param([string]$Path, [int64]$ChunkSize)
-            $bytes = [System.IO.File]::ReadAllBytes($Path)
-            $total = [math]::Ceiling($bytes.Length / $ChunkSize)
-            for ($i=0; $i -lt $total; $i++) {
-              $offset = $i * $ChunkSize
-              $len = [math]::Min($ChunkSize, $bytes.Length - $offset)
-              $chunk = New-Object byte[] $len
-              [Array]::Copy($bytes, $offset, $chunk, 0, $len)
-              $partPath = "{0}.part{1:00}" -f $Path, ($i+1)
-              [System.IO.File]::WriteAllBytes($partPath, $chunk)
+
+            $buffer = New-Object byte[] $ChunkSize
+            $index = 1
+
+            $inStream = [System.IO.File]::OpenRead($Path)
+            try {
+              while (($read = $inStream.Read($buffer, 0, $buffer.Length)) -gt 0) {
+                $partPath = "{0}.part{1:00}" -f $Path, $index
+                $outStream = [System.IO.File]::Create($partPath)
+                try {
+                  $outStream.Write($buffer, 0, $read)
+                } finally {
+                  $outStream.Close()
+                }
+                $index++
+              }
+            } finally {
+              $inStream.Close()
             }
-            Remove-Item $Path
+
+            Remove-Item $Path -Force
           }
 
           Split-File -Path $zipPath -ChunkSize $maxSize
-          Write-Host "ZIP split into 45MB parts."
+          Write-Host "ZIP split into <=45MB parts."
 
       - name: 📤 Upload Installer as Artifact
         uses: actions/upload-artifact@v4
