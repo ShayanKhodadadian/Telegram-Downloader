@@ -69,36 +69,47 @@ jobs:
             $pkg = $data | Select-Object -First 1
             $appId = $pkg.PackageIdentifier
           }
-          else {
-            # Text mode (fallback for older winget)
+                    else {
+            # Text mode (fallback for older winget) — Robust parsing
             $raw = winget search --name "$appName" --source winget --accept-source-agreements --disable-interactivity 2>&1 | Out-String
             $lines = $raw -split "`r?`n"
 
-            # پیدا کردن خط جداکننده (---) و انتخاب اولین خط داده بعد از آن
-            $sepIndex = -1
-            for ($i=0; $i -lt $lines.Length; $i++) {
-              if ($lines[$i] -match '^-{2,}\s+-{2,}') { $sepIndex = $i; break }
+            # Regex برای تشخیص ستون‌ها: Name   Id   Version
+            $pattern = '^(?<Name>.+?)\s{2,}(?<Id>[A-Za-z0-9][A-Za-z0-9\.-]+)\s{2,}(?<Version>\S+)\s*$'
+
+            $matches = @()
+            foreach ($line in $lines) {
+              $lineTrim = $line.Trim()
+
+              # رد کردن خطوط خالی، progress barها و header
+              if ([string]::IsNullOrWhiteSpace($lineTrim)) { continue }
+              if ($lineTrim -match '^[█▒ ]+\s+\d+(\.\d+)?\s*([KMG]?B)?\s*/\s*\d+(\.\d+)?\s*([KMG]?B)?$') { continue }
+              if ($lineTrim -match '^[█▒ ]+\s+\d+%$') { continue }
+              if ($lineTrim -match '^\-+$') { continue }
+              if ($lineTrim -match '^Name\s+Id\s+Version$') { continue }
+
+              $m = [regex]::Match($lineTrim, $pattern)
+              if ($m.Success) {
+                $matches += [PSCustomObject]@{
+                  Name    = $m.Groups['Name'].Value.Trim()
+                  Id      = $m.Groups['Id'].Value.Trim()
+                  Version = $m.Groups['Version'].Value.Trim()
+                }
+              }
             }
 
-            if ($sepIndex -eq -1 -or $sepIndex + 1 -ge $lines.Length) {
+            if ($matches.Count -eq 0) {
               Write-Error "Could not parse winget text output. Raw:`n$raw"
               exit 1
             }
 
-            $firstData = $lines[$sepIndex + 1].Trim()
-            if ([string]::IsNullOrWhiteSpace($firstData)) {
-              # اگر خط خالی بود، خط بعدی را بگیر
-              $firstData = $lines[$sepIndex + 2].Trim()
-            }
+            # اگر نام برنامه در Name پیدا شد همان را انتخاب کن، وگرنه اولین مورد
+            $selected = $matches | Where-Object { $_.Name -match [regex]::Escape($appName) } | Select-Object -First 1
+            if (-not $selected) { $selected = $matches | Select-Object -First 1 }
 
-            $columns = $firstData -split '\s{2,}' | ForEach-Object { $_.Trim() }
-            if ($columns.Count -lt 2) {
-              Write-Error "Could not parse ID from line: $firstData"
-              exit 1
-            }
-
-            $appId = $columns[1]  # ستون دوم = ID
+            $appId = $selected.Id
           }
+
 
           if ([string]::IsNullOrWhiteSpace($appId)) {
             Write-Error "Could not extract App ID."
