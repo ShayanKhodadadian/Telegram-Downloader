@@ -183,6 +183,8 @@ jobs:
                       file_name = f"telegram_file_{idx}"
 
                   file_name = file_name.split('?')[0].split('#')[0]
+                  if len(file_name) > 200:
+                      file_name = file_name[:200]
 
                   downloads.append({
                       'telegram_link': telegram_link,
