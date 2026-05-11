@@ -69,7 +69,7 @@ jobs:
             $pkg = $data | Select-Object -First 1
             $appId = $pkg.PackageIdentifier
           }
-                    else {
+                              else {
             # Text mode (fallback for older winget) — Robust parsing
             $raw = winget search --name "$appName" --source winget --accept-source-agreements --disable-interactivity 2>&1 | Out-String
             $lines = $raw -split "`r?`n"
@@ -77,7 +77,7 @@ jobs:
             # Regex برای تشخیص ستون‌ها: Name   Id   Version
             $pattern = '^(?<Name>.+?)\s{2,}(?<Id>[A-Za-z0-9][A-Za-z0-9\.-]+)\s{2,}(?<Version>\S+)\s*$'
 
-            $matches = @()
+            $results = @()
             foreach ($line in $lines) {
               $lineTrim = $line.Trim()
 
@@ -90,7 +90,7 @@ jobs:
 
               $m = [regex]::Match($lineTrim, $pattern)
               if ($m.Success) {
-                $matches += [PSCustomObject]@{
+                $results += [PSCustomObject]@{
                   Name    = $m.Groups['Name'].Value.Trim()
                   Id      = $m.Groups['Id'].Value.Trim()
                   Version = $m.Groups['Version'].Value.Trim()
@@ -98,18 +98,17 @@ jobs:
               }
             }
 
-            if ($matches.Count -eq 0) {
+            if ($results.Count -eq 0) {
               Write-Error "Could not parse winget text output. Raw:`n$raw"
               exit 1
             }
 
             # اگر نام برنامه در Name پیدا شد همان را انتخاب کن، وگرنه اولین مورد
-            $selected = $matches | Where-Object { $_.Name -match [regex]::Escape($appName) } | Select-Object -First 1
-            if (-not $selected) { $selected = $matches | Select-Object -First 1 }
+            $selected = $results | Where-Object { $_.Name -match [regex]::Escape($appName) } | Select-Object -First 1
+            if (-not $selected) { $selected = $results | Select-Object -First 1 }
 
             $appId = $selected.Id
           }
-
 
           if ([string]::IsNullOrWhiteSpace($appId)) {
             Write-Error "Could not extract App ID."
