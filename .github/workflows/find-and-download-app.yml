@@ -1,63 +1,62 @@
-name: 🔎 Find and Download Windows App
+name: 🕵️‍♂️ Find and Download Windows App
 
-# این Workflow به صورت دستی با دریافت نام برنامه اجرا می‌شود
 on:
   workflow_dispatch:
     inputs:
       app_name:
-        description: 'Enter the application name (e.g., 7-Zip, VLC, PowerShell)'
+        description: 'Enter the name of the application to search and download (e.g., "7-Zip", "VLC", "PowerToys")'
         required: true
-        type: string
+        default: '7-Zip'
 
 jobs:
-  find-and-download:
-    # اجرا روی یک سرور مجازی با سیستم‌عامل ویندوز
+  find-download-and-upload:
     runs-on: windows-latest
 
     steps:
-      # مرحله ۱: کپی کردن فایل‌های مخزن روی سرور (یک مرحله استاندارد)
-      - name: Checkout repository
+      - name: 🛒 Checkout repository
         uses: actions/checkout@v4
 
-      # مرحله ۲: پیدا کردن ID برنامه از روی نام ورودی کاربر
-      - name: Find Application ID from Name
-        id: find_app_id
+      - name: 🔎 Find Application ID from Name
+        id: find_id
+        shell: pwsh
         run: |
-          echo "Searching for application ID for: ${{ github.event.inputs.app_name }}"
-          # جستجو فقط در منبع اصلی winget برای جلوگیری از خطای msstore
-          $search_output = winget search "${{ github.event.inputs.app_name }}" --source winget --accept-source-agreements
+          echo "Searching for app ID for '${{ inputs.app_name }}'..."
+          # Winget can have a progress bar which clutters the output, so we disable it.
+          # We search only in the 'winget' source to avoid potential msstore API errors.
+          $searchResult = winget search "${{ inputs.app_name }}" --source winget --accept-source-agreements --disable-interactivity
           
-          # پیدا کردن خطی که مربوط به برنامه مورد نظر است
-          $app_line = $search_output | Select-String -Pattern "${{ github.event.inputs.app_name }}" | Select-Object -First 1
+          # The output has a header and a line of '---', so we skip the first 2 lines.
+          $firstResultLine = $searchResult.Split([System.Environment]::NewLine) | Select-Object -Skip 2 | Select-Object -First 1
           
-          if ($app_line) {
-            # استخراج ID که معمولاً دومین کلمه در خروجی است
-            $app_id_found = ($app_line -split '\s+')[1]
-            echo "✅ Found App ID: $app_id_found"
-            # ذخیره کردن ID برای استفاده در مرحله بعد
-            echo "APP_ID_FOUND=$app_id_found" >> $env:GITHUB_ENV
+          if ($null -ne $firstResultLine -and $firstResultLine.Trim() -ne "") {
+            # Split by 2 or more whitespace characters to correctly separate columns.
+            $columns = $firstResultLine -split '\s{2,}' | ForEach-Object { $_.Trim() }
+            $appId = $columns[1] # The second column is the ID.
+            
+            if ($null -ne $appId -and $appId.Trim() -ne "") {
+              echo "✅ Found App ID: $appId"
+              echo "APP_ID_FOUND=$appId" >> $env:GITHUB_OUTPUT
+            } else {
+              echo "::error::Could not parse the App ID from the search result line: '$firstResultLine'"
+              exit 1
+            }
           } else {
-            echo "❌ Could not find an application ID for '${{ github.event.inputs.app_name }}'."
+            echo "::error::Could not find any app matching the name '${{ inputs.app_name }}' in the winget source."
             exit 1
           }
 
-      # مرحله ۳: دانلود فایل نصبی برنامه با استفاده از ID پیدا شده
-      - name: Download Application Installer
-        if: env.APP_ID_FOUND
-        run: |
-          echo "Downloading installer for ${{ env.APP_ID_FOUND }}..."
-          # ساخت پوشه downloads
-          mkdir downloads
-          
-          # اجرای دستور دانلود و ذخیره فایل در پوشه downloads
-          winget download --id "${{ env.APP_ID_FOUND }}" --source winget --accept-source-agreements --download-directory ./downloads
-          
-          echo "✅ Download complete."
+      - name: 📦 Create Download Directory
+        run: mkdir downloads
 
-      # مرحله ۴: آپلود پوشه downloads به عنوان یک Artifact در گیت‌هاب
-      - name: Upload Installer as Artifact
-        if: env.APP_ID_FOUND
+      - name: 🔽 Download the Application Installer
+        if: steps.find_id.outputs.APP_ID_FOUND
+        shell: pwsh
+        run: |
+          echo "Downloading installer for ID: ${{ steps.find_id.outputs.APP_ID_FOUND }}"
+          winget download --id "${{ steps.find_id.outputs.APP_ID_FOUND }}" --source winget --accept-package-agreements --disable-interactivity --download-directory ./downloads
+      
+      - name: 📤 Upload Installer as Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: windows-app-installer-${{ github.event.inputs.app_name }}
-          path: ./downloads/
+          name: windows-app-installer-${{ inputs.app_name }}
+          path: downloads/
