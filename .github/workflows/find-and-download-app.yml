@@ -1,64 +1,37 @@
-name: 🔎 Smart Find and Download Windows App
+name: 🔎 Find and Download Windows App
 
 on:
   workflow_dispatch:
     inputs:
       app_name:
-        description: 'نام برنامه (مثال: VLC, 7-Zip, PowerToys)'
+        description: 'Enter the name of the application to search and download (e.g., 7-Zip, VLC, PowerShell)'
         required: true
         type: string
 
 jobs:
   find-and-download:
-    name: 🔎 جستجو، دانلود و آپلود برنامه
     runs-on: windows-latest
 
     steps:
-      # مرحله ۱: آماده‌سازی محیط
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # مرحله ۲: ایجاد پوشه downloads
-      - name: Create downloads directory
-        run: mkdir downloads
-        shell: pwsh
-
-      # مرحله ۳: جستجوی نام برنامه و استخراج ID آن
-      - name: 🔎 Find Application ID from Name
-        id: find_id
-        shell: pwsh
+      - name: Find Application ID from Name
+        id: find_app_id
         run: |
-          echo "Searching for '${{ inputs.app_name }}' in Winget..."
-          # جستجو و ذخیره نتایج
-          $searchResults = winget search "${{ inputs.app_name }}" --accept-source-agreements
+          echo "Searching for application ID for: ${{ github.event.inputs.app_name }}"
+          # --- تغییر در این خط: --source winget اضافه شد ---
+          $search_output = winget search "${{ github.event.inputs.app_name }}" --source winget --accept-source-agreements
           
-          # استخراج خط اول نتایج (بعد از دو خط هدر)
-          $firstResultLine = $searchResults | Select-Object -Skip 2 | Select-Object -First 1
+          # Find the line with the most relevant result (often the first one after the header)
+          $app_line = $search_output | Select-String -Pattern "${{ github.event.inputs.app_name }}" | Select-Object -First 1
           
-          # بررسی اینکه آیا نتیجه‌ای پیدا شده است یا نه
-          if (-not $firstResultLine) {
-            echo "::error::No application found with the name '${{ inputs.app_name }}'. Please try a more specific name."
+          if ($app_line) {
+            # Extract the ID which is the second word in the line
+            $app_id_found = ($app_line -split '\s+')[1]
+            echo "✅ Found App ID: $app_id_found"
+            echo "APP_ID_FOUND=$app_id_found" >> $env:GITHUB_ENV
+          } else {
+            echo "❌ Could not find an application ID for '${{ github.event.inputs.app_name }}'."
             exit 1
           }
-          
-          # استخراج ID از خط نتیجه (دومین کلمه در خط)
-          $appId = ($firstResultLine -split '\s+')[1]
-          
-          echo "✅ App ID found: $appId"
-          
-          # ذخیره ID در متغیرهای محیطی گیت‌هاب برای استفاده در مرحله بعد
-          echo "APP_ID_FOUND=$appId" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-
-      # مرحله ۴: دانلود فایل با ID پیدا شده
-      - name: 📥 Download the application using the found ID
-        shell: pwsh
-        run: |
-          echo "Downloading ${{ env.APP_ID_FOUND }}..."
-          winget download --id "${{ env.APP_ID_FOUND }}" --accept-source-agreements --accept-package-agreements --download-directory ./downloads
-          
-      # مرحله ۵: آپلود فایل‌های دانلود شده به عنوان Artifact
-      - name: 📦 Upload installer as an artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: windows-app-installer-${{ inputs.app_name }} # نام فایل زیپ شامل اسم برنامه می‌شود
-          path: downloads/
