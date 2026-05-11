@@ -24,58 +24,89 @@ jobs:
           Invoke-WebRequest $wingetUrl -OutFile $out
           Add-AppxPackage -Path $out
 
-      - name: 🔎 Find Application ID (Robust JSON Parse)
+      - name: 🔎 Find Application ID (JSON if supported, fallback to text)
         id: find_id
         shell: pwsh
         run: |
           $appName = "${{ inputs.app_name }}"
           Write-Host "Searching for app ID for '$appName'..."
 
-          $jsonFile = Join-Path $env:TEMP "winget_search.json"
-          $errFile  = Join-Path $env:TEMP "winget_search.err"
+          $help = winget search --help 2>&1 | Out-String
+          $hasJsonOutput = $help -match "--output"
 
-          # خروجی JSON فقط در فایل ذخیره می‌شود
-          winget search --name "$appName" --source winget --accept-source-agreements --disable-interactivity --output json 1> $jsonFile 2> $errFile
+          if ($hasJsonOutput) {
+            # JSON mode
+            $jsonFile = Join-Path $env:TEMP "winget_search.json"
+            $errFile  = Join-Path $env:TEMP "winget_search.err"
 
-          $jsonText = Get-Content $jsonFile -Raw
+            winget search --name "$appName" --source winget --accept-source-agreements --disable-interactivity --output json 1> $jsonFile 2> $errFile
 
-          # اگر فایل خالی بود، خطا را چاپ کن
-          if ([string]::IsNullOrWhiteSpace($jsonText)) {
-            Write-Error "winget returned empty JSON. STDERR:`n$(Get-Content $errFile -Raw)"
-            exit 1
+            $jsonText = Get-Content $jsonFile -Raw
+            if ([string]::IsNullOrWhiteSpace($jsonText)) {
+              Write-Error "winget returned empty JSON. STDERR:`n$(Get-Content $errFile -Raw)"
+              exit 1
+            }
+
+            $jsonText = $jsonText -replace "^\uFEFF", ""
+            $jsonText = $jsonText -replace "`e\[[0-9;]*[A-Za-z]", ""
+
+            try {
+              $json = $jsonText | ConvertFrom-Json
+            } catch {
+              Write-Error "JSON parse failed. Raw JSON:`n$jsonText"
+              exit 1
+            }
+
+            $data = $null
+            if ($null -ne $json.Data) { $data = $json.Data }
+            elseif ($null -ne $json.Packages) { $data = $json.Packages }
+
+            if ($null -eq $data -or $data.Count -eq 0) {
+              Write-Error "No package found for '$appName' in winget source."
+              exit 1
+            }
+
+            $pkg = $data | Select-Object -First 1
+            $appId = $pkg.PackageIdentifier
           }
+          else {
+            # Text mode (fallback for older winget)
+            $raw = winget search --name "$appName" --source winget --accept-source-agreements --disable-interactivity 2>&1 | Out-String
+            $lines = $raw -split "`r?`n"
 
-          # حذف BOM یا کاراکترهای کنترلی احتمالی
-          $jsonText = $jsonText -replace "^\uFEFF", ""
-          $jsonText = $jsonText -replace "`e\[[0-9;]*[A-Za-z]", ""
+            # پیدا کردن خط جداکننده (---) و انتخاب اولین خط داده بعد از آن
+            $sepIndex = -1
+            for ($i=0; $i -lt $lines.Length; $i++) {
+              if ($lines[$i] -match '^-{2,}\s+-{2,}') { $sepIndex = $i; break }
+            }
 
-          try {
-            $json = $jsonText | ConvertFrom-Json
-          } catch {
-            Write-Error "JSON parse failed. Raw JSON:`n$jsonText"
-            exit 1
+            if ($sepIndex -eq -1 -or $sepIndex + 1 -ge $lines.Length) {
+              Write-Error "Could not parse winget text output. Raw:`n$raw"
+              exit 1
+            }
+
+            $firstData = $lines[$sepIndex + 1].Trim()
+            if ([string]::IsNullOrWhiteSpace($firstData)) {
+              # اگر خط خالی بود، خط بعدی را بگیر
+              $firstData = $lines[$sepIndex + 2].Trim()
+            }
+
+            $columns = $firstData -split '\s{2,}' | ForEach-Object { $_.Trim() }
+            if ($columns.Count -lt 2) {
+              Write-Error "Could not parse ID from line: $firstData"
+              exit 1
+            }
+
+            $appId = $columns[1]  # ستون دوم = ID
           }
-
-          $data = $null
-          if ($null -ne $json.Data) { $data = $json.Data }
-          elseif ($null -ne $json.Packages) { $data = $json.Packages }
-
-          if ($null -eq $data -or $data.Count -eq 0) {
-            Write-Error "No package found for '$appName' in winget source."
-            exit 1
-          }
-
-          $pkg = $data | Select-Object -First 1
-          $appId = $pkg.PackageIdentifier
 
           if ([string]::IsNullOrWhiteSpace($appId)) {
-            Write-Error "Could not extract App ID from search result."
+            Write-Error "Could not extract App ID."
             exit 1
           }
 
           Write-Host "✅ Found App ID: $appId"
           echo "APP_ID_FOUND=$appId" >> $env:GITHUB_OUTPUT
-
 
       - name: 📦 Create Download Directory
         id: create_downloads
@@ -117,8 +148,6 @@ jobs:
 
           $zipPath = Join-Path $dir "$safeName.zip"
           Compress-Archive -Path "$dir\*" -DestinationPath $zipPath -Force
-
-          # Remove original files to keep artifacts clean
           $files | Remove-Item -Force
 
           $zipInfo = Get-Item $zipPath
