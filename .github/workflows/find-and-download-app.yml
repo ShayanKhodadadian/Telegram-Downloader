@@ -31,17 +31,30 @@ jobs:
           $appName = "${{ inputs.app_name }}"
           Write-Host "Searching for app ID for '$appName'..."
 
-          $raw = winget search --name "$appName" --source winget --accept-source-agreements --disable-interactivity --output json 2>&1
-          $text = $raw -join "`n"
+          $jsonFile = Join-Path $env:TEMP "winget_search.json"
+          $errFile  = Join-Path $env:TEMP "winget_search.err"
 
-          # Extract JSON object/array from mixed output
-          $match = [regex]::Match($text, '(\{.*\}|\[.*\])', 'Singleline')
-          if (-not $match.Success) {
-            Write-Error "No JSON detected in winget output. Raw output:`n$text"
+          # خروجی JSON فقط در فایل ذخیره می‌شود
+          winget search --name "$appName" --source winget --accept-source-agreements --disable-interactivity --output json 1> $jsonFile 2> $errFile
+
+          $jsonText = Get-Content $jsonFile -Raw
+
+          # اگر فایل خالی بود، خطا را چاپ کن
+          if ([string]::IsNullOrWhiteSpace($jsonText)) {
+            Write-Error "winget returned empty JSON. STDERR:`n$(Get-Content $errFile -Raw)"
             exit 1
           }
 
-          $json = $match.Value | ConvertFrom-Json
+          # حذف BOM یا کاراکترهای کنترلی احتمالی
+          $jsonText = $jsonText -replace "^\uFEFF", ""
+          $jsonText = $jsonText -replace "`e\[[0-9;]*[A-Za-z]", ""
+
+          try {
+            $json = $jsonText | ConvertFrom-Json
+          } catch {
+            Write-Error "JSON parse failed. Raw JSON:`n$jsonText"
+            exit 1
+          }
 
           $data = $null
           if ($null -ne $json.Data) { $data = $json.Data }
@@ -62,6 +75,7 @@ jobs:
 
           Write-Host "✅ Found App ID: $appId"
           echo "APP_ID_FOUND=$appId" >> $env:GITHUB_OUTPUT
+
 
       - name: 📦 Create Download Directory
         id: create_downloads
